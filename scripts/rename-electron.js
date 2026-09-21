@@ -6,7 +6,21 @@
 const fs   = require('fs');
 const path = require('path');
 
-if (process.platform !== 'win32') process.exit(0);
+if (process.platform !== 'win32') {
+  // Still need to ensure path.txt exists so Electron can find its binary.
+  // On macOS/Linux the binary isn't renamed, so write the default path.
+  const nonWinPathTxt = path.join(__dirname, '..', 'node_modules', 'electron', 'path.txt');
+  const defaultPaths = {
+    darwin: 'Electron.app/Contents/MacOS/Electron',
+    linux:  'electron',
+  };
+  const platformPath = defaultPaths[process.platform] || 'electron';
+  if (!fs.existsSync(nonWinPathTxt)) {
+    fs.writeFileSync(nonWinPathTxt, platformPath);
+    console.log(`[postinstall] path.txt -> ${platformPath} (${process.platform})`);
+  }
+  process.exit(0);
+}
 
 const DISPLAY_NAME = 'MicrosoftEdgeUpdate.exe';
 const distDir = path.join(__dirname, '..', 'node_modules', 'electron', 'dist');

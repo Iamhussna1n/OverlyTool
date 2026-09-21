@@ -66,10 +66,9 @@ const DEFAULTS = {
   models: {
     openai: { fast: 'gpt-4o-mini', smart: 'gpt-4o' },
     anthropic: { fast: 'claude-3-5-haiku-latest', smart: 'claude-3-5-sonnet-latest' },
-    // Kept in sync with CURRENT_GEMINI_DEFAULT in src/llm.js — gemini-2.0-flash
-    // (the previous default here) was retired by Google on 2026-03-03 and 404s
-    // on every request. gemini-2.5-flash is current and free-tier available.
-    gemini: { fast: 'gemini-2.5-flash', smart: 'gemini-2.5-flash' },
+    // Kept in sync with CURRENT_GEMINI_DEFAULT in src/llm.js — gemini-3.6-flash
+    // is current and free-tier available.
+    gemini: { fast: 'gemini-3.6-flash', smart: 'gemini-3.6-flash' },
     custom: { fast: '', smart: '' },
     ollama: { fast: 'llama3.2', smart: 'llama3.3' },
     groq: { fast: 'llama-3.1-8b-instant', smart: 'llama-3.3-70b-versatile' },
@@ -167,6 +166,13 @@ module.exports = {
     load();
     const nextSettings = deepMerge(data, patch || {});
     nextSettings.baseUrl = normalizeBaseUrl(nextSettings.baseUrl);
+    if (nextSettings.apiKeys && typeof nextSettings.apiKeys === 'object') {
+      for (const k of Object.keys(nextSettings.apiKeys)) {
+        if (typeof nextSettings.apiKeys[k] === 'string') {
+          nextSettings.apiKeys[k] = nextSettings.apiKeys[k].trim();
+        }
+      }
+    }
     data = nextSettings;
     save();
     return data;

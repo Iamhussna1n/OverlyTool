@@ -291,7 +291,15 @@ async function flushChannel(channel) {
     const settings = store.getSettings();
     const stt = createSTT(settings);
     if (!stt.available) {
-      if (!sttDisabled) { sttDisabled = true; send('status', { message: 'No transcription key set. Add an OpenAI (Whisper), Deepgram, or Gemini key in Settings to enable listening. Screen/LeetCode features work without it.' }); }
+      if (!sttDisabled) {
+        sttDisabled = true;
+        const selected = settings.sttProvider || 'auto';
+        if (selected !== 'auto') {
+          send('status', { message: `Speech-to-text is set to "${selected}", but no key is set for it. Switch Speech-to-text to "Auto" or your configured provider in Settings → Transcription.` });
+        } else {
+          send('status', { message: 'No transcription key set. Add an OpenAI (Whisper), Deepgram, or Gemini key in Settings to enable listening. Screen/LeetCode features work without it.' });
+        }
+      }
       return;
     }
     const res = await stt.transcribe(pcm);
