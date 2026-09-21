@@ -992,13 +992,17 @@ function launchApp() {
   // System-audio loopback for getDisplayMedia: hand back a screen source with 'loopback'
   // audio so the renderer can capture what's playing (Zoom/Meet) using cue's own grant.
   session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+    let handled = false;
+    const safeCallback = (response) => {
+      if (handled) return;
+      handled = true;
+      try { callback(response); } catch (_) {}
+    };
+
     desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
-      if (!sources.length) return callback();
-      const request = { video: sources[0] };
-      if (isWindows) request.audio = true;
-      else request.audio = 'loopback';
-      callback(request);
-    }).catch(() => callback());
+      if (!sources || !sources.length) return safeCallback();
+      safeCallback({ video: sources[0], audio: 'loopback' });
+    }).catch(() => safeCallback());
   }, { useSystemPicker: false });
 
   // Started before the shortcuts so their registration failures are recorded.
