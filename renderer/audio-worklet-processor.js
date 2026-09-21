@@ -5,7 +5,7 @@
 class CueAudioProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this._bufferSize = 4096; // accumulate before sending (matches old ScriptProcessor)
+    this._bufferSize = 1024; // ~64ms at 16kHz — low-latency capture (was 4096/256ms)
     this._buffer = new Float32Array(this._bufferSize);
     this._writeIndex = 0;
   }

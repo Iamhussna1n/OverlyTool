@@ -58,7 +58,7 @@ let sttDisabled = false; // set when the key can't reach any speech model (stops
 const buffers = { you: [], them: [] };
 const transcript = []; // { channel, text, ts } — capped at MAX_TRANSCRIPT_TURNS
 const MAX_TRANSCRIPT_TURNS = 200; // ~30–40 minutes of conversation at normal pace
-const FLUSH_MS = 900;
+const FLUSH_MS = 500;
 const STREAM_INACTIVITY_MS = 25000; // abort a stalled LLM stream so state.busy can't wedge forever
 const MIN_BYTES = Math.floor(16000 * 2 * 0.12); // ~0.12s
 const RMS_GATE = 180;
@@ -76,16 +76,23 @@ const vad = {
   you: new AdaptiveVAD({
     onsetThreshold: 220,
     offsetThreshold: 130,
-    silenceFrames: 18,       // ~540ms silence before end
+    silenceFrames: 12,       // ~360ms silence before end (was 18/540ms)
     onSpeechStart: () => send('vad:state', { channel: 'you', speaking: true }),
-    onSpeechEnd: (dur) => send('vad:state', { channel: 'you', speaking: false, durationMs: dur })
+    onSpeechEnd: (dur) => {
+      send('vad:state', { channel: 'you', speaking: false, durationMs: dur });
+      // Immediate flush in batch mode — don't wait for the next FLUSH_MS tick
+      if (!streamingMode && !localWhisperTranscriber) flushChannel('you');
+    }
   }),
   them: new AdaptiveVAD({
     onsetThreshold: 200,
     offsetThreshold: 120,
-    silenceFrames: 20,       // ~600ms for remote audio (more forgiving)
+    silenceFrames: 14,       // ~420ms for remote audio (was 20/600ms)
     onSpeechStart: () => send('vad:state', { channel: 'them', speaking: true }),
-    onSpeechEnd: (dur) => send('vad:state', { channel: 'them', speaking: false, durationMs: dur })
+    onSpeechEnd: (dur) => {
+      send('vad:state', { channel: 'them', speaking: false, durationMs: dur });
+      if (!streamingMode && !localWhisperTranscriber) flushChannel('them');
+    }
   })
 };
 // Pre-speech ring buffers (300ms) so we never clip the start of a word
