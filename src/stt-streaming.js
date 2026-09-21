@@ -244,14 +244,13 @@ class DeepgramStreamingSTT {
         language: 'en',
         smart_format: 'true',
         interim_results: 'true',
-        utterance_end_ms: '400',
+        utterance_end_ms: '1000',
         vad_events: 'true',
         encoding: 'linear16',
         sample_rate: '16000',
         channels: '1',
-        endpointing: '150',
-        punctuate: 'true',
-        no_delay: 'true'
+        endpointing: '300',
+        punctuate: 'true'
       });
 
       const url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
