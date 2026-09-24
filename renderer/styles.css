@@ -51,6 +51,7 @@ html, body {
   align-items: center;
   padding-top: 14px;
   pointer-events: none;                  /* only the actual UI blocks; gaps pass through */
+  overflow: hidden;                      /* FIX: prevent children from pushing toolbar out of view */
 }
 #toolbar, #panel-wrap, #settings-scrim, #onboard-scrim, #consent-scrim { pointer-events: auto; }
 #toolbar { -webkit-app-region: drag; }   /* drag the top pill to move the window */
@@ -58,6 +59,7 @@ html, body {
 
 /* ============================ Toolbar pill ============================ */
 #toolbar {
+  flex-shrink: 0;                        /* FIX: never let toolbar shrink or get pushed out */
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -72,14 +74,14 @@ html, body {
 .drag-handle { -webkit-app-region: drag; }
 .drag-pill {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 4px 8px; border-radius: var(--r-pill);
+  padding: 8px 14px; border-radius: var(--r-pill); /* FIX: larger hit area for easier drag */
   background: rgba(255,255,255,0.06);
   color: rgba(255,255,255,0.8);
   font-size: 12px; font-weight: 600; letter-spacing: 0.01em;
   cursor: grab;
   -webkit-app-region: drag;
 }
-.drag-pill:hover { background: rgba(255,255,255,0.10); }
+.drag-pill:hover { background: rgba(255,255,255,0.10); cursor: grabbing; }
 .drag-dots {
   width: 14px; height: 10px;
   display: inline-block;
@@ -147,7 +149,7 @@ html, body {
 .mic-perm-actions button.dismiss:hover { background: rgba(255,255,255,0.10); color: var(--tx-2); }
 
 /* ============================ Panel ============================ */
-#panel-wrap { position: relative; margin-top: 12px; width: min(624px, 94vw); }
+#panel-wrap { position: relative; margin-top: 12px; width: min(624px, 94vw); flex: 1; min-height: 0; overflow: hidden; /* FIX: contain panel growth within remaining space */ }
 button:focus { outline: none; }
 #live-dot {
   position: absolute; top: -3px; left: -5px; z-index: 4;
@@ -166,7 +168,7 @@ button:focus { outline: none; }
   border-radius: var(--r-panel);
   box-shadow: 0 16px 48px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.10);
 }
-#panel { padding: 20px 22px; animation: overlayIn 260ms cubic-bezier(0.22,1,0.36,1); }
+#panel { padding: 20px 22px; animation: overlayIn 260ms cubic-bezier(0.22,1,0.36,1); max-height: 100%; overflow-y: auto; /* FIX: scroll within panel, not push toolbar */ }
 #panel.collapsed { display: none; }
 
 /* ============================ Messages ============================ */

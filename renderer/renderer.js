@@ -343,25 +343,30 @@
     updateQuestionReadyState();
     updateSendButtonState(); // FIX #9: Update send button state
 
-    // Reset the idle timer — after 2s of silence, check if question is complete
+    // ---- AUTO-SEND: after silence, automatically send to LLM ----
+    // No "question detection" — if the other person spoke and then went silent,
+    // send whatever accumulated. Like Parakeet: silence = done talking = auto-fire.
     clearTimeout(questionFinalizeTimer);
     questionFinalizeTimer = setTimeout(() => {
-      if (isLikelyCompleteQuestion(input.value)) {
+      const text = input.value.trim();
+      // Guard: must have real content from STT, not busy, not cleared by user
+      if (text.length >= 10 && inputFromSTT && !busy) {
         composer.classList.add('stt-ready');
-        updateSendButtonState(); // FIX #9: Update send button when ready
-        // Subtle notification that question is ready
-        showToast('Press Enter to answer', 2500);
+        updateSendButtonState();
+        showToast('Auto-sending…', 1500);
+        // Clear the 8s history timer — we're sending, not saving
+        clearTimeout(sttFillTimer);
+        send();
       }
-    }, 1800);
+    }, 2500); // 2.5s of silence after last transcript chunk = other person is done
 
-    // After 8s of no new words, save to history and keep stable
+    // After 8s of no new words (and no auto-send), save to history and stabilize
     clearTimeout(sttFillTimer);
     sttFillTimer = setTimeout(() => {
       saveToQuestionHistory(input.value);
       composer.classList.remove('stt-filling');
-      // Keep stt-ready if applicable
       updateQuestionReadyState();
-      updateSendButtonState(); // FIX #9
+      updateSendButtonState();
     }, 8000);
   }
 
@@ -1092,9 +1097,10 @@
     aiEl.appendChild(caretEl);
     group.appendChild(aiEl);
     messages.appendChild(group);
-    // Use requestAnimationFrame so the DOM is fully updated before scrolling
+    // Scroll within #messages container only — NOT scrollIntoView which can scroll
+    // the entire document and push the toolbar out of view in transparent Electron windows
     requestAnimationFrame(() => {
-      if (sep && sep.isConnected) sep.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (messages) messages.scrollTop = messages.scrollHeight;
     });
     setBusy(true);
   });
@@ -1699,7 +1705,32 @@
   // ---- click-through: only the UI blocks the mouse; empty gaps pass to your screen ----
   let ignoring = null;
   function setIgnore(v) { if (v !== ignoring) { ignoring = v; cue.setIgnoreMouse(v); } }
+
+  // FIX: Use mouseenter/mouseleave on interactive regions for INSTANT mouse re-enable.
+  // The old mousemove + elementFromPoint had a full frame of latency which made drag
+  // grabs fail on the first attempt — you had to "hard press" because the first mousedown
+  // was still being ignored while the IPC round-trip to re-enable was in flight.
+  const interactiveSelectors = ['#toolbar', '#panel-wrap', '#transcript-sidebar', '#settings-scrim', '#onboard-scrim', '#consent-scrim'];
+  interactiveSelectors.forEach((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return;
+    el.addEventListener('mouseenter', () => setIgnore(false));
+    el.addEventListener('mouseleave', () => {
+      // Only re-ignore if mouse isn't over another interactive region
+      requestAnimationFrame(() => {
+        const hoveredEl = document.elementFromPoint(lastMouseX, lastMouseY);
+        const stillOverUI = !!(hoveredEl && hoveredEl.closest && hoveredEl.closest(interactiveSelectors.join(', ')));
+        if (!stillOverUI) setIgnore(true);
+      });
+    });
+  });
+
+  // Track mouse position for leave checks
+  let lastMouseX = 0, lastMouseY = 0;
   document.addEventListener('mousemove', (e) => {
+    lastMouseX = e.clientX;
+    lastMouseY = e.clientY;
+    // Fallback: still check on move in case mouseenter was missed (e.g. window just appeared)
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const overUI = !!(el && el.closest && el.closest('#toolbar, #panel-wrap, #transcript-sidebar, #settings-scrim, #onboard-scrim, #consent-scrim'));
     setIgnore(!overUI);
