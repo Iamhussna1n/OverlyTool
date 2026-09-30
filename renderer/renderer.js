@@ -149,8 +149,30 @@
   }
 
   // ---- actions -----------------------------------------------------------
+  // Pending question queue — holds { mode, text } items that arrive while the
+  // LLM is busy generating. Drained FIFO as soon as state.busy is released.
+  const pendingQueue = [];
+
+  function drainQueue() {
+    if (busy || pendingQueue.length === 0) return;
+    const next = pendingQueue.shift();
+    // Show a toast so the user sees the queued question is now being answered
+    if (pendingQueue.length > 0) {
+      showToast(`Answering queued question… (${pendingQueue.length} remaining)`, 2000);
+    }
+    runMode(next.mode, next.text);
+  }
+
   function runMode(mode, text) {
-    if (busy) return;
+    if (busy) {
+      // Queue it instead of silently dropping
+      if (mode === 'answerThis' && text) {
+        // Only queue interviewer questions; don't double-queue manual button presses
+        pendingQueue.push({ mode, text });
+        showToast(`Queued: "${text.slice(0, 50)}${text.length > 50 ? '…' : ''}"`, 2500);
+      }
+      return;
+    }
     setBusy(true);
     cue.ask({ mode, text: text || '' });
   }
@@ -170,6 +192,10 @@
   let questionFinalizeTimer = null;
   let softClearTimer = null;
   let userSpeechStart = null;
+  // Timestamp of the last 'them' final chunk — used to debounce properly
+  let lastThemFinalAt = 0;
+  // Whether a response is currently in-flight (LLM streaming) for the current STT fill
+  let responseInFlight = false;
 
   // Question history for undo (Ctrl+Z)
   const questionHistory = [];
@@ -343,67 +369,61 @@
     updateQuestionReadyState();
     updateSendButtonState(); // FIX #9: Update send button state
 
-    // ---- AUTO-SEND: after silence, automatically send to LLM ----
-    // No "question detection" — if the other person spoke and then went silent,
-    // send whatever accumulated. Like Parakeet: silence = done talking = auto-fire.
+    // ---- MANUAL-ONLY: no auto-send ----
+    // The box fills continuously as the interviewer speaks via Deepgram.
+    // The LLM is ONLY triggered by the user pressing the play button or Enter.
+    // This prevents broken/partial responses from premature auto-fire.
     clearTimeout(questionFinalizeTimer);
-    questionFinalizeTimer = setTimeout(() => {
-      const text = input.value.trim();
-      // Guard: must have real content from STT, not busy, not cleared by user
-      if (text.length >= 10 && inputFromSTT && !busy) {
-        composer.classList.add('stt-ready');
-        updateSendButtonState();
-        showToast('Auto-sending…', 1500);
-        // Clear the 8s history timer — we're sending, not saving
-        clearTimeout(sttFillTimer);
-        send();
-      }
-    }, 2500); // 2.5s of silence after last transcript chunk = other person is done
+    lastThemFinalAt = Date.now();
 
-    // After 8s of no new words (and no auto-send), save to history and stabilize
+    // After 10s of silence, stabilize the visual state (stop the "filling" animation)
     clearTimeout(sttFillTimer);
     sttFillTimer = setTimeout(() => {
       saveToQuestionHistory(input.value);
       composer.classList.remove('stt-filling');
       updateQuestionReadyState();
       updateSendButtonState();
-    }, 8000);
+    }, 10000);
   }
 
   // ---- Soft clear: don't immediately wipe question when user speaks ----
   function softClearSTTFill() {
-    // When the user speaks (You channel), don't immediately clear
-    // Instead, dim the input and wait — they might just be acknowledging
+    // When the user speaks (You channel), don't immediately clear the pending question.
+    // KEY RULE: if the LLM is currently generating a response (responseInFlight),
+    // or if the question has already been queued/sent, never clear the box on user speech —
+    // the question has already "left" and dimming it is misleading.
     if (!inputFromSTT) return;
-    
-    // FIX #3: Reset userSpeechStart at the beginning before setting new timestamp
-    // This ensures we always track from fresh when a new soft-clear cycle begins
+    if (responseInFlight) return; // Don't dim while response is streaming
+
     const now = Date.now();
     if (!userSpeechStart) {
       userSpeechStart = now;
     }
 
-    // Dim the input to show it's in "pending clear" state
+    // Only dim if the LLM is not already working on this question
     composer.classList.add('stt-dimmed');
-    
-    // Clear the finalization timer (user is responding)
+
+    // Cancel the auto-send timer — user is speaking (likely answering)
     clearTimeout(questionFinalizeTimer);
 
-    // Re-armed on every 'you' final, so this fires ~800ms after the user stops.
-    // The 2s test below is measured from the FIRST final of this cycle, so a brief
-    // acknowledgement ("mm-hm") leaves the question on screen while a sustained
-    // answer clears it. Firing at 2.5s instead would make that test always true.
+    // Re-armed on every 'you' final. Fires ~800ms after user stops speaking.
+    // Speech must last > 3s (not just "mm-hm") before we clear the box.
     clearTimeout(softClearTimer);
     softClearTimer = setTimeout(() => {
       const speechDuration = userSpeechStart ? Date.now() - userSpeechStart : 0;
-      if (speechDuration > 2000) {
+      if (speechDuration > 3000) {
         // User has been speaking for a while — they're answering, clear the box
         saveToQuestionHistory(input.value);
         input.value = '';
         inputFromSTT = false;
+        responseInFlight = false;
         composer.classList.remove('stt-filling', 'stt-dimmed', 'stt-ready', 'stt-accumulating');
         syncPlaceholder();
-        updateSendButtonState(); // FIX #9: Update send button state
+        updateSendButtonState();
+        userSpeechStart = null;
+      } else {
+        // Brief acknowledgement ("mm-hm", "yeah") — restore the question, don't clear
+        composer.classList.remove('stt-dimmed');
         userSpeechStart = null;
       }
     }, 800);
@@ -418,6 +438,8 @@
     inputFromSTT = false;
     lastSTTValue = ''; // FIX #6: Clear the tracked STT value
     userSpeechStart = null;
+    responseInFlight = false;
+    pendingQueue.length = 0; // discard any queued questions — user explicitly cleared
     composer.classList.remove('stt-filling', 'stt-dimmed', 'stt-ready', 'stt-accumulating');
     clearTimeout(softClearTimer);
     clearTimeout(questionFinalizeTimer);
@@ -426,13 +448,14 @@
     syncPlaceholder();
     updateSendButtonState(); // FIX #9
     updateHistoryBadge(); // FIX #14
-    
+
     // FIX #10: Show undo hint when explicitly cleared
     if (showUndoHint && hadContent) {
       const undoHint = isWindows ? 'Ctrl+Z to undo' : '⌘Z to undo';
       showToast(`Cleared · ${undoHint}`, 2000);
     }
   }
+
 
   // ---- Reset soft-clear state (interviewer spoke again) ----
   // FIX #16: Reset userSpeechStart properly when cancelSoftClear is called
@@ -490,10 +513,10 @@
     const text = input.value.trim();
     if (!text) { runMode('assist', ''); return; }
     const wasFromSTT = inputFromSTT;
-    
+
     // Save to history before clearing (in case user wants to redo)
     saveToQuestionHistory(text);
-    
+
     input.value = '';
     inputFromSTT = false;
     lastSTTValue = ''; // FIX #6: Clear tracked STT value
@@ -503,8 +526,11 @@
     clearTimeout(questionFinalizeTimer);
     clearTimeout(sttFillTimer);
     syncPlaceholder();
-    updateSendButtonState(); // FIX #9
-    
+    updateSendButtonState();
+
+    // Mark a response as in-flight so soft-clear won't wipe next question
+    if (wasFromSTT) responseInFlight = true;
+
     // If text came from STT (interviewer question), use answerThis mode
     // Otherwise use ask mode (user typed their own question)
     runMode(wasFromSTT ? 'answerThis' : 'ask', text);
@@ -1105,10 +1131,19 @@
     setBusy(true);
   });
   cue.on('llm:token', ({ text }) => appendToken(text));
-  cue.on('llm:done', () => { finalizeAi(); setBusy(false); });
+  cue.on('llm:done', () => {
+    finalizeAi();
+    setBusy(false);
+    responseInFlight = false;
+    // Drain any questions that arrived while we were busy
+    drainQueue();
+  });
   cue.on('llm:error', ({ message, action }) => {
     if (!aiEl) startAi(true);
     aiEl.dataset.raw = message; finalizeAi(); setBusy(false);
+    responseInFlight = false;
+    // Drain queue even after an error — the next question may succeed
+    drainQueue();
     // publik errors carry one action: the renderer's markdown emits no anchors,
     // so a link needs a real button (same pattern as the mic banner).
     if (action && action.kind === 'card') { showPublikCard(); return; }
