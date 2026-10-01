@@ -4,11 +4,11 @@
 // path fast and avoids crashing if MongoDB is not running.
 
 const MONGO_URI = 'mongodb://localhost:27017/';
-const DB_NAME   = 'cue';
-const COL_NAME  = 'sessions';
+const DB_NAME = 'cue';
+const COL_NAME = 'sessions';
 
 let client = null;
-let db     = null;
+let db = null;
 
 async function connect() {
   if (db) return db;
