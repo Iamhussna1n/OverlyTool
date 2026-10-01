@@ -747,22 +747,37 @@
         const result = await cue.sessionSave();
         if (result && result.ok) {
           saveSessionBtn.textContent = 'Saved';
+          saveSessionBtn.title = 'Saved to MongoDB (id: ' + result.id + ')';
           setTimeout(() => {
             saveSessionBtn.textContent = 'Save session';
+            saveSessionBtn.title = '';
             saveSessionBtn.classList.remove('saving');
           }, 2500);
           console.log('[session] saved to MongoDB, id:', result.id);
         } else {
           const err = (result && result.error) || 'Unknown error';
-          saveSessionBtn.textContent = 'Failed';
+          let label = 'Failed';
+          if (err.includes('No transcript')) label = 'No speech';
+          else if (err.includes('ECONNREFUSED') || err.includes('Server selection') || err.includes('timed out')) label = 'DB offline';
+          else if (err.includes('LLM')) label = 'LLM error';
+
+          saveSessionBtn.textContent = label;
+          saveSessionBtn.title = err;
           saveSessionBtn.classList.remove('saving');
-          setTimeout(() => { saveSessionBtn.textContent = 'Save session'; }, 3000);
+          setTimeout(() => {
+            saveSessionBtn.textContent = 'Save session';
+            saveSessionBtn.title = '';
+          }, 3500);
           console.error('[session] save failed:', err);
         }
       } catch (e) {
         saveSessionBtn.textContent = 'Error';
+        saveSessionBtn.title = (e && e.message) || String(e);
         saveSessionBtn.classList.remove('saving');
-        setTimeout(() => { saveSessionBtn.textContent = 'Save session'; }, 3000);
+        setTimeout(() => {
+          saveSessionBtn.textContent = 'Save session';
+          saveSessionBtn.title = '';
+        }, 3500);
         console.error('[session] save error:', e);
       }
     });

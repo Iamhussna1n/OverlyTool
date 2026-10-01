@@ -893,28 +893,40 @@ ipcMain.on('session:setContext', (_e, text) => {
 // Steps: (1) generate a recap via the LLM, (2) persist to MongoDB.
 ipcMain.handle('session:save', async () => {
   try {
-    if (!transcript.length) return { ok: false, error: 'No transcript to save.' };
+    if (!transcript.length) {
+      console.warn('[session] cannot save: transcript is empty');
+      return { ok: false, error: 'No transcript to save. Record or speak something first.' };
+    }
     const settings = store.getSettings();
     const llm = createLLM(settings);
-    if (!llm.ready) return { ok: false, error: 'LLM not configured — cannot generate summary.' };
 
     // Build the recap prompt (same approach as the 'recap' mode)
-    const { formatTranscript } = require('./src/prompts');
     const { buildNotesPrompt, parseNotes } = require('./src/notes');
-    const { buildInterviewContext: bic } = require('./src/interview-context');
-    const contextBlock = bic(settings, 'recap', transcript);
-    const system = contextBlock
-      ? contextBlock + '\n\nYou are cue. Summarize this interview.'
-      : 'You are cue. Summarize this interview.';
-    const userTurn = buildNotesPrompt(transcript);
-
-    // Stream the recap and collect tokens
     let summaryText = '';
-    await llm.stream({
-      system,
-      turns: [{ role: 'user', text: userTurn }],
-      onToken: (t) => { summaryText += t; }
-    });
+
+    if (llm && llm.ready) {
+      try {
+        const { buildInterviewContext: bic } = require('./src/interview-context');
+        const contextBlock = bic(settings, 'recap', transcript);
+        const system = contextBlock
+          ? contextBlock + '\n\nYou are cue. Summarize this interview.'
+          : 'You are cue. Summarize this interview.';
+        const userTurn = buildNotesPrompt(transcript);
+
+        await llm.stream({
+          system,
+          turns: [{ role: 'user', text: userTurn }],
+          onToken: (t) => { summaryText += t; }
+        });
+      } catch (llmErr) {
+        console.warn('[session] summary generation failed, proceeding with raw transcript:', llmErr && llmErr.message);
+        summaryText = 'Summary unavailable (' + ((llmErr && llmErr.message) || 'LLM error') + ')';
+      }
+    } else {
+      console.warn('[session] LLM not configured, saving session with raw transcript');
+      summaryText = 'Summary unavailable (LLM not configured)';
+    }
+
     const notes = parseNotes(summaryText);
 
     const doc = {
