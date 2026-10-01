@@ -171,20 +171,32 @@ function buildInterviewContext(settings, mode, transcript) {
 
   const category = detectCategory(transcript || []);
 
-  const resume    = settings.resumeText || '';
-  const jd        = settings.jobDescription || '';
-  const stories   = settings.starStories || '';
-  const whyCo     = settings.whyCompany || '';
-  const whyLeave  = settings.whyLeaving || '';
-  const workStyle = settings.workStyle || '';
-  const salary    = settings.salaryTarget || '';
-  const questions = settings.questionsToAsk || '';
+  const resume         = settings.resumeText || '';
+  const jd             = settings.jobDescription || '';
+  const stories        = settings.starStories || '';
+  const whyCo          = settings.whyCompany || '';
+  const whyLeave       = settings.whyLeaving || '';
+  const workStyle      = settings.workStyle || '';
+  const salary         = settings.salaryTarget || '';
+  const questions      = settings.questionsToAsk || '';
+  const sessionContext = (settings.sessionContext || '').trim();
 
   const hasResume  = resume.trim().length > 0;
   const hasStories = stories.trim().length > 0;
   const hasJD      = jd.trim().length > 0;
 
   const blocks = [];
+
+  // ── Session context (current assessment brief) ──────────────────────────────
+  // This is the highest-priority block: it tells the LLM exactly what kind of
+  // interview THIS session is, overriding generic category guesses.
+  if (sessionContext) {
+    blocks.push(
+      '=== THIS SESSION ===\n' +
+      clip(sessionContext, 1200) + '\n' +
+      'Use this context to tailor EVERY answer to this specific role, company, and assessment.'
+    );
+  }
 
   // Always include resume if available (but size varies by category)
   if (hasResume) {

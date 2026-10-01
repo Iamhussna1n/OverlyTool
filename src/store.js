@@ -60,6 +60,9 @@ const DEFAULTS = {
   // points", "casual tone". Applied to every LLM mode EXCEPT LeetCode (kept
   // strict for coding problems).
   aiRules: '',
+  // Current session context — freeform brief the user types before each interview
+  // (role, company, assessment type, specific topics). Cleared after stop.
+  sessionContext: '',
   // Window position
   windowX: null,
   windowY: null,

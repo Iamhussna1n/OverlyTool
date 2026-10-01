@@ -13,6 +13,7 @@ const { AdaptiveVAD, AudioRingBuffer } = require('./src/vad');
 const { buildInterviewContext, detectCategory } = require('./src/interview-context');
 const { startAppLink, stopAppLink, recordEvent, appLinkConsentState, revokeAppLinkCaller } = require('./src/applink');
 const publik = require('./src/publik');
+const { saveSession } = require('./src/db');
 // The app token release.yml baked into src/publik-build.json (empty in a dev
 // checkout → the publik option is simply absent from the provider picker).
 const publikBuild = publik.loadBuildConfig();
@@ -59,7 +60,7 @@ const buffers = { you: [], them: [] };
 const transcript = []; // { channel, text, ts } — capped at MAX_TRANSCRIPT_TURNS
 const MAX_TRANSCRIPT_TURNS = 200; // ~30–40 minutes of conversation at normal pace
 const FLUSH_MS = 500;
-const STREAM_INACTIVITY_MS = 25000; // abort a stalled LLM stream so state.busy can't wedge forever
+const STREAM_INACTIVITY_MS = 60000; // abort a stalled LLM stream so state.busy can't wedge forever
 const MIN_BYTES = Math.floor(16000 * 2 * 0.12); // ~0.12s
 const RMS_GATE = 180;
 let flushTimer = null;
@@ -68,6 +69,7 @@ let localWhisperTranscriber = null;
 let activeWhisperModelId = null;
 let desiredCaptureState = false;
 let captureTransition = Promise.resolve(false);
+let sessionStartedAt = null; // set when capture begins, cleared when it ends
 
 // -------- streaming STT state --------
 let streamingSTT = { you: null, them: null }; // streaming STT instances per channel
@@ -451,6 +453,7 @@ async function setCapturing(active) {
       try {
         await startLocalWhisper(settings);
         state.capturing = true;
+        sessionStartedAt = Date.now();
         console.log('[cue] capture started, mode: local');
         send('capture:state', { active: true, streaming: false, mode: 'local' });
         return true;
@@ -470,6 +473,7 @@ async function setCapturing(active) {
     }
 
     state.capturing = true;
+    sessionStartedAt = Date.now();
     // Try streaming first, fall back to batch
     const streaming = initStreamingSTT();
     if (!streaming) {
@@ -481,6 +485,9 @@ async function setCapturing(active) {
   }
 
   state.capturing = false;
+  sessionStartedAt = null;
+  // Clear the per-session context brief so the user fills it fresh next time
+  store.setSettings({ sessionContext: '' });
   stopFlushLoop();
   stopStreamingSTT();
   buffers.you = []; buffers.them = [];
@@ -873,6 +880,64 @@ ipcMain.handle('profile:pickDocument', async () => {
 ipcMain.on('app:quit', () => app.quit());
 ipcMain.handle('applink:state', () => appLinkConsentState());
 ipcMain.handle('applink:revoke', (_e, callerId) => revokeAppLinkCaller(callerId));
+
+// -------- session context + MongoDB save --------
+// Saves the user-typed pre-session brief so every LLM call picks it up via
+// buildInterviewContext(). The value is persisted in settings so it survives
+// an accidental restart; it is explicitly cleared when capture stops.
+ipcMain.on('session:setContext', (_e, text) => {
+  store.setSettings({ sessionContext: (text || '').slice(0, 2000) });
+});
+
+// session:save — called by the "Save Session" button in the renderer.
+// Steps: (1) generate a recap via the LLM, (2) persist to MongoDB.
+ipcMain.handle('session:save', async () => {
+  try {
+    if (!transcript.length) return { ok: false, error: 'No transcript to save.' };
+    const settings = store.getSettings();
+    const llm = createLLM(settings);
+    if (!llm.ready) return { ok: false, error: 'LLM not configured — cannot generate summary.' };
+
+    // Build the recap prompt (same approach as the 'recap' mode)
+    const { formatTranscript } = require('./src/prompts');
+    const { buildNotesPrompt, parseNotes } = require('./src/notes');
+    const { buildInterviewContext: bic } = require('./src/interview-context');
+    const contextBlock = bic(settings, 'recap', transcript);
+    const system = contextBlock
+      ? contextBlock + '\n\nYou are cue. Summarize this interview.'
+      : 'You are cue. Summarize this interview.';
+    const userTurn = buildNotesPrompt(transcript);
+
+    // Stream the recap and collect tokens
+    let summaryText = '';
+    await llm.stream({
+      system,
+      turns: [{ role: 'user', text: userTurn }],
+      onToken: (t) => { summaryText += t; }
+    });
+    const notes = parseNotes(summaryText);
+
+    const doc = {
+      sessionContext : settings.sessionContext || '',
+      summary        : notes.summary,
+      keyPoints      : notes.keyPoints,
+      decisions      : notes.decisions,
+      actionItems    : notes.actionItems,
+      followUp       : notes.followUp,
+      transcript     : transcript.slice(),
+      startedAt      : sessionStartedAt || Date.now(),
+      savedAt        : Date.now()
+    };
+
+    const id = await saveSession(doc);
+    console.log('[session] saved to MongoDB, id:', id);
+    return { ok: true, id };
+  } catch (e) {
+    console.error('[session] save error:', e && e.message);
+    return { ok: false, error: (e && e.message) || String(e) };
+  }
+});
+
 
 // -------- permissions IPC --------
 ipcMain.handle('permissions:check', () => getPermissionStatus());

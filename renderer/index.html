@@ -20,6 +20,8 @@
       <div class="tb-divider"></div>
       <button class="tb-stop" id="stop-btn" title="Start / stop listening"></button>
       <div class="tb-divider"></div>
+      <button class="tb-save-session hidden" id="save-session-btn" title="Save session summary to database">Save session</button>
+      <div class="tb-divider tb-save-divider hidden"></div>
       <button class="tb-quit" id="quit-btn" title="Quit cue (⌘⇧X)"></button>
     </div>
 
@@ -91,6 +93,33 @@
       </div>
       <div class="ts-footer">
         <button class="ts-clear-btn" id="clear-transcript-btn" title="Clear all history">Clear History</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pre-session context dialog — shown when user clicks Start listening -->
+  <div id="session-scrim" class="hidden">
+    <div id="session-dialog" class="glass session-dialog">
+      <div class="session-dialog-header">
+        <span class="session-dialog-title">Session Brief</span>
+        <span class="session-dialog-hint">Optional — the AI will tailor every answer using this</span>
+      </div>
+      <textarea
+        id="session-context-input"
+        class="session-context-textarea"
+        rows="6"
+        spellcheck="false"
+        maxlength="2000"
+        placeholder="Paste anything that helps the AI give better answers for THIS session, e.g.:
+
+Role: Senior Backend Engineer @ Stripe
+Round: Technical — distributed systems &amp; Kafka
+Stack they use: Go, Kafka, PostgreSQL, k8s
+Key thing to emphasize: my work scaling payments to 10M TPS
+Salary ask: $200k base"></textarea>
+      <div class="session-dialog-actions">
+        <button id="session-skip-btn" class="session-btn-secondary">Skip</button>
+        <button id="session-start-btn" class="session-btn-primary">Start listening</button>
       </div>
     </div>
   </div>

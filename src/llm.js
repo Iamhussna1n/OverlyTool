@@ -391,7 +391,7 @@ function createLLM(settings) {
   }
 
   const ready = !configurationError && !!model;
-  const maxTokens = settings.smart ? 1400 : 700;
+  const maxTokens = settings.smart ? 8192 : 4096;
 
   return {
     provider, model, apiKey, baseURL,

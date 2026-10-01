@@ -33,31 +33,73 @@
   let responseCount = 0;
   const MAX_RESPONSES = 20;
 
+  // Track the latest interviewer speech (both interim and final turns) so that
+  // pressing play / send immediately never sends an empty or half-missing question.
+  let lastThemInterim = '';
+  let lastThemTranscriptTurn = '';
+
   const messages = $('#messages');
 
   function esc(s) { return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
-  // minimal, safe markdown: fenced code, bullets, inline code, bold, paragraphs
+  let scrollTokenRaf = null;
+  function scheduleScrollMessages() {
+    if (scrollTokenRaf) return;
+    scrollTokenRaf = requestAnimationFrame(() => {
+      scrollTokenRaf = null;
+      if (messages) messages.scrollTop = messages.scrollHeight;
+    });
+  }
+
+  // minimal, safe markdown: fenced code, numbered lists, bullets, inline code, bold, headers, paragraphs
   function renderMarkdown(text) {
     const lines = text.split('\n');
-    let html = '', inCode = false, inList = false, buf = [];
-    const flushP = () => { if (buf.length) { html += '<p>' + inline(buf.join(' ')) + '</p>'; buf = []; } };
+    let html = '', inCode = false, inUl = false, inOl = false, buf = [];
+    const closeLists = () => {
+      if (inUl) { html += '</ul>'; inUl = false; }
+      if (inOl) { html += '</ol>'; inOl = false; }
+    };
+    const flushP = () => {
+      if (buf.length) {
+        html += '<p>' + inline(buf.join(' ')) + '</p>';
+        buf = [];
+      }
+    };
     const inline = (s) => esc(s)
       .replace(/`([^`]+)`/g, '<code>$1</code>')
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     for (const raw of lines) {
       const line = raw;
       if (/^```/.test(line.trim())) {
-        if (!inCode) { flushP(); if (inList) { html += '</ul>'; inList = false; } html += '<pre><code>'; inCode = true; }
+        if (!inCode) { flushP(); closeLists(); html += '<pre><code>'; inCode = true; }
         else { html += '</code></pre>'; inCode = false; }
         continue;
       }
       if (inCode) { html += esc(line) + '\n'; continue; }
-      if (/^\s*[-*]\s+/.test(line)) { flushP(); if (!inList) { html += '<ul>'; inList = true; } html += '<li>' + inline(line.replace(/^\s*[-*]\s+/, '')) + '</li>'; continue; }
-      if (line.trim() === '') { flushP(); if (inList) { html += '</ul>'; inList = false; } continue; }
+      if (/^#{1,4}\s+(.+)$/.test(line.trim())) {
+        flushP(); closeLists();
+        const m = /^#{1,4}\s+(.+)$/.exec(line.trim());
+        html += '<h4>' + inline(m[1]) + '</h4>';
+        continue;
+      }
+      if (/^\s*[-*]\s+/.test(line)) {
+        flushP();
+        if (inOl) { html += '</ol>'; inOl = false; }
+        if (!inUl) { html += '<ul>'; inUl = true; }
+        html += '<li>' + inline(line.replace(/^\s*[-*]\s+/, '')) + '</li>';
+        continue;
+      }
+      if (/^\s*\d+[\.\)]\s+/.test(line)) {
+        flushP();
+        if (inUl) { html += '</ul>'; inUl = false; }
+        if (!inOl) { html += '<ol>'; inOl = true; }
+        html += '<li>' + inline(line.replace(/^\s*\d+[\.\)]\s+/, '')) + '</li>';
+        continue;
+      }
+      if (line.trim() === '') { flushP(); closeLists(); continue; }
       buf.push(line.trim());
     }
-    flushP(); if (inList) html += '</ul>'; if (inCode) html += '</code></pre>';
+    flushP(); closeLists(); if (inCode) html += '</code></pre>';
     return html;
   }
 
@@ -78,6 +120,7 @@
     caretEl.className = 'ai-caret';
     aiEl.appendChild(caretEl);
     messages.appendChild(aiEl);
+    scheduleScrollMessages();
   }
 
   function appendToken(t) {
@@ -92,6 +135,7 @@
     } else {
       aiEl.appendChild(span);
     }
+    scheduleScrollMessages();
   }
 
   function finalizeAi() {
@@ -99,6 +143,7 @@
     const raw = aiEl.dataset.raw || '';
     aiEl.innerHTML = renderMarkdown(raw);
     aiEl = null; caretEl = null;
+    scheduleScrollMessages();
   }
 
   let busyFailsafe = null;
@@ -358,6 +403,9 @@
     composer.classList.remove('stt-dimmed');
 
     const current = input.value.trim();
+    if (current && (current.endsWith(text) || current.includes(text))) {
+      return; // Already includes this text
+    }
     const newText = current ? current + ' ' + text : text;
     input.value = newText;
     inputFromSTT = true;
@@ -437,6 +485,8 @@
     input.value = '';
     inputFromSTT = false;
     lastSTTValue = ''; // FIX #6: Clear the tracked STT value
+    lastThemInterim = '';
+    lastThemTranscriptTurn = '';
     userSpeechStart = null;
     responseInFlight = false;
     pendingQueue.length = 0; // discard any queued questions — user explicitly cleared
@@ -510,9 +560,36 @@
   $('#input-area').addEventListener('click', () => input.focus());
 
   function send() {
-    const text = input.value.trim();
-    if (!text) { runMode('assist', ''); return; }
-    const wasFromSTT = inputFromSTT;
+    let text = input.value.trim();
+    let wasFromSTT = inputFromSTT;
+
+    // Check if there is pending uncommitted interim speech from the interviewer
+    if (lastThemInterim && lastThemInterim.trim().length > 0) {
+      const interimTrimmed = lastThemInterim.trim();
+      if (!text) {
+        text = interimTrimmed;
+        wasFromSTT = true;
+      } else if (!text.endsWith(interimTrimmed) && !text.includes(interimTrimmed)) {
+        text = (text + ' ' + interimTrimmed).trim();
+        wasFromSTT = true;
+      }
+    }
+
+    // If input is still empty, check if listening is active and we have a recent interviewer turn
+    if (!text && lastThemTranscriptTurn && $('#stop-btn').classList.contains('active')) {
+      text = lastThemTranscriptTurn;
+      wasFromSTT = true;
+    }
+
+    if (!text) {
+      // If listening is active, ask the AI what to say next based on the live conversation
+      if ($('#stop-btn').classList.contains('active')) {
+        runMode('say', '');
+      } else {
+        runMode('assist', '');
+      }
+      return;
+    }
 
     // Save to history before clearing (in case user wants to redo)
     saveToQuestionHistory(text);
@@ -520,6 +597,8 @@
     input.value = '';
     inputFromSTT = false;
     lastSTTValue = ''; // FIX #6: Clear tracked STT value
+    lastThemInterim = '';
+    clearInputInterim();
     userSpeechStart = null;
     composer.classList.remove('stt-filling', 'stt-dimmed', 'stt-ready', 'stt-accumulating');
     clearTimeout(softClearTimer);
@@ -593,18 +672,102 @@
   $('#hide-btn').addEventListener('click', toggleHide);
   cue.on('hide:toggle', toggleHide);
 
+  // ---- Pre-session context dialog ----------------------------------------
+  // Shown when the user clicks Start. They can paste a brief for THIS session
+  // (role, company, round type) so the LLM has sharper context.
+  // If they skip or capture was already active, we go straight to toggle.
+  const sessionScrim  = document.getElementById('session-scrim');
+  const sessionInput  = document.getElementById('session-context-input');
+  const sessionStart  = document.getElementById('session-start-btn');
+  const sessionSkip   = document.getElementById('session-skip-btn');
+
+  function showSessionDialog() {
+    if (sessionScrim) {
+      if (sessionInput) sessionInput.value = '';
+      sessionScrim.classList.remove('hidden');
+      // Immediately re-enable mouse so the dialog buttons work.
+      // The pointer may already be still; don't wait for a mousemove.
+      setIgnore(false);
+      if (sessionInput) setTimeout(() => sessionInput.focus(), 60);
+    }
+  }
+  function hideSessionDialog() {
+    if (sessionScrim) sessionScrim.classList.add('hidden');
+  }
+
+  async function startCaptureWithContext(contextText) {
+    hideSessionDialog();
+    // Save context to main (persisted in settings, cleared on stop by main.js)
+    cue.sessionSetContext(contextText || '');
+    // Now actually start capture — system audio needs fresh user gesture
+    try { await startSystemAudio(); } catch (_) { /* handled inside startSystemAudio */ }
+    const active = await cue.captureToggle();
+    if (!active) stopSystemAudio();
+  }
+
+  if (sessionStart) {
+    sessionStart.addEventListener('click', () => {
+      startCaptureWithContext(sessionInput ? sessionInput.value.trim() : '');
+    });
+  }
+  if (sessionSkip) {
+    sessionSkip.addEventListener('click', () => {
+      startCaptureWithContext('');
+    });
+  }
+  // Allow Escape to skip
+  if (sessionScrim) {
+    sessionScrim.addEventListener('click', (e) => {
+      if (e.target === sessionScrim) startCaptureWithContext('');
+    });
+  }
+
   // Stop = start/stop listening. Kick off system-audio capture straight from the click so
   // the user-gesture is fresh for getDisplayMedia (loopback capture needs it).
   $('#stop-btn').addEventListener('click', async () => {
     const turningOn = !$('#stop-btn').classList.contains('active');
     if (turningOn) {
-      // startSystemAudio may fail (user cancels, no permission) — that's OK,
-      // mic will still work and capture will toggle regardless
-      try { await startSystemAudio(); } catch (_) { /* handled inside startSystemAudio */ }
+      // Show the pre-session brief dialog before starting
+      showSessionDialog();
+    } else {
+      // Turning off — no dialog needed
+      const active = await cue.captureToggle();
+      if (active) stopSystemAudio(); // shouldn't happen, but guard
     }
-    const active = await cue.captureToggle();
-    if (turningOn && !active) stopSystemAudio();
   });
+
+  // ---- Save Session button -----------------------------------------------
+  const saveSessionBtn = document.getElementById('save-session-btn');
+  const saveSessionDivider = document.querySelector('.tb-save-divider');
+  if (saveSessionBtn) {
+    saveSessionBtn.addEventListener('click', async () => {
+      saveSessionBtn.textContent = 'Saving...';
+      saveSessionBtn.classList.add('saving');
+      try {
+        const result = await cue.sessionSave();
+        if (result && result.ok) {
+          saveSessionBtn.textContent = 'Saved';
+          setTimeout(() => {
+            saveSessionBtn.textContent = 'Save session';
+            saveSessionBtn.classList.remove('saving');
+          }, 2500);
+          console.log('[session] saved to MongoDB, id:', result.id);
+        } else {
+          const err = (result && result.error) || 'Unknown error';
+          saveSessionBtn.textContent = 'Failed';
+          saveSessionBtn.classList.remove('saving');
+          setTimeout(() => { saveSessionBtn.textContent = 'Save session'; }, 3000);
+          console.error('[session] save failed:', err);
+        }
+      } catch (e) {
+        saveSessionBtn.textContent = 'Error';
+        saveSessionBtn.classList.remove('saving');
+        setTimeout(() => { saveSessionBtn.textContent = 'Save session'; }, 3000);
+        console.error('[session] save error:', e);
+      }
+    });
+  }
+
 
   // Transcript toggle removed — sidebar now auto-opens with listening
 
@@ -971,6 +1134,13 @@
     if (historyBtn) {
       historyBtn.classList.toggle('listening', active);
     }
+    // Show the Save Session button only while listening
+    if (saveSessionBtn) saveSessionBtn.classList.toggle('hidden', !active);
+    if (saveSessionDivider) saveSessionDivider.classList.toggle('hidden', !active);
+    if (!active && saveSessionBtn) {
+      saveSessionBtn.textContent = 'Save session';
+      saveSessionBtn.classList.remove('saving');
+    }
     // startSystemAudio() is called directly from the stop-button click handler
     // so that the getDisplayMedia request has a fresh user gesture.
     // Here we only start the mic (no gesture required) and stop everything on deactivate.
@@ -997,6 +1167,7 @@
       updateSttStatus({ active, streaming });
     }
   });
+
 
   // ---- real-time transcript display (interim + final) ----
   let interimEl = null;
@@ -1044,9 +1215,13 @@
     el.classList.add('show');
     appendTranscriptHistoryTurn(channel, text, true); // update sidebar interim
     
-    // FIX #12: Show interviewer's interim speech in input area
-    if (channel === 'them' && !input.value.trim()) {
-      showInterimInInput(text);
+    // Track interim text for the interviewer and show in composer
+    if (channel === 'them') {
+      lastThemInterim = text ? String(text).trim() : '';
+      cancelSoftClear();
+      if (!input.value.trim()) {
+        showInterimInInput(text);
+      }
     }
   });
   cue.on('stt:final', ({ channel, text }) => {
@@ -1055,6 +1230,9 @@
     if (interimEl) { interimEl.textContent = ''; interimEl.classList.remove('show'); }
     clearTranscriptInterim();
     clearInputInterim(); // FIX #12: Clear interim text from input area
+    if (channel === 'them') {
+      lastThemInterim = '';
+    }
     // sidebar: the final turn is added via the 'transcript' event below
   });
   cue.on('stt:status', ({ channel, status, provider }) => {
@@ -1154,6 +1332,7 @@
     appendTranscriptHistoryTurn(channel, text, false);
     // Auto-fill the input box with Them (interviewer) speech
     if (channel === 'them') {
+      lastThemTranscriptTurn = text.trim();
       cancelSoftClear(); // Interviewer is speaking, cancel any pending clear
       autoFillInputFromSTT(text);
     } else {
@@ -1745,7 +1924,7 @@
   // The old mousemove + elementFromPoint had a full frame of latency which made drag
   // grabs fail on the first attempt — you had to "hard press" because the first mousedown
   // was still being ignored while the IPC round-trip to re-enable was in flight.
-  const interactiveSelectors = ['#toolbar', '#panel-wrap', '#transcript-sidebar', '#settings-scrim', '#onboard-scrim', '#consent-scrim'];
+  const interactiveSelectors = ['#toolbar', '#panel-wrap', '#transcript-sidebar', '#settings-scrim', '#onboard-scrim', '#consent-scrim', '#session-scrim'];
   interactiveSelectors.forEach((sel) => {
     const el = document.querySelector(sel);
     if (!el) return;
@@ -1767,7 +1946,7 @@
     lastMouseY = e.clientY;
     // Fallback: still check on move in case mouseenter was missed (e.g. window just appeared)
     const el = document.elementFromPoint(e.clientX, e.clientY);
-    const overUI = !!(el && el.closest && el.closest('#toolbar, #panel-wrap, #transcript-sidebar, #settings-scrim, #onboard-scrim, #consent-scrim'));
+    const overUI = !!(el && el.closest && el.closest('#toolbar, #panel-wrap, #transcript-sidebar, #settings-scrim, #onboard-scrim, #consent-scrim, #session-scrim'));
     setIgnore(!overUI);
   });
   setIgnore(true); // start fully click-through; hovering the panel re-enables it

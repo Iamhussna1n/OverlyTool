@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld('cue', {
   permissionsRequest: () => ipcRenderer.invoke('permissions:request'),
   permissionsContinue: () => ipcRenderer.send('permissions:continue'),
   log: (msg) => ipcRenderer.send('log', msg),
+  sessionSetContext: (text) => ipcRenderer.send('session:setContext', text),
+  sessionSave: () => ipcRenderer.invoke('session:save'),
   on: (channel, cb) => {
     const allowed = ['capture:state', 'llm:start', 'llm:token', 'llm:done', 'llm:error', 'status', 'transcript', 'stt:interim', 'stt:final', 'stt:status', 'vad:state', 'applink:consent-request', 'hide:toggle', 'whisper:download-progress', 'whisper:models-changed', 'publik:state'];
     if (!allowed.includes(channel)) return;
