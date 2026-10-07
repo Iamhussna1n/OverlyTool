@@ -18,12 +18,33 @@ const { initChroma, storeInterview, searchInterviews, getCount, deleteInterview 
 
 const FAKE_ID = 'test-rag-001';
 
+function getGeminiKey() {
+  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
+  const fs = require('fs');
+  const path = require('path');
+  const os = require('os');
+  const candidatePaths = [
+    path.join(os.homedir(), 'Library', 'Application Support', 'cue', 'cue-data.json'),
+    path.join(os.homedir(), '.config', 'cue', 'cue-data.json'),
+    path.join(process.env.APPDATA || '', 'cue', 'cue-data.json'),
+  ];
+  for (const p of candidatePaths) {
+    try {
+      if (fs.existsSync(p)) {
+        const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+        if (data?.apiKeys?.gemini) return data.apiKeys.gemini;
+      }
+    } catch {}
+  }
+  return '';
+}
+
 async function test() {
   console.log('=== ChromaDB Integration Test ===\n');
 
-  const geminiKey = process.env.GEMINI_API_KEY || '';
+  const geminiKey = getGeminiKey();
   if (!geminiKey) {
-    console.error('[ERROR] GEMINI_API_KEY environment variable is not set.');
+    console.error('[ERROR] GEMINI_API_KEY is not set in environment or in Cue app settings.');
     console.error('  Usage: GEMINI_API_KEY=your_key node scripts/testChroma.js');
     process.exit(1);
   }

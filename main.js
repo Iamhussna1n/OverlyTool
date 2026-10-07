@@ -14,7 +14,7 @@ const { buildInterviewContext, detectCategory } = require('./src/interview-conte
 const { startAppLink, stopAppLink, recordEvent, appLinkConsentState, revokeAppLinkCaller } = require('./src/applink');
 const publik = require('./src/publik');
 const { saveSession, connect: dbConnect } = require('./src/db');
-const { initChroma, storeInterview } = require('./src/chroma');
+const { initChroma, storeInterview, setApiKey } = require('./src/chroma');
 const { buildRagContext } = require('./src/rag');
 // The app token release.yml baked into src/publik-build.json (empty in a dev
 // checkout → the publik option is simply absent from the provider picker).
@@ -631,7 +631,14 @@ async function runFeature(mode, userText) {
 // Redact on the way out, strip on the way in: the publik key never enters the
 // renderer, and the renderer's whole-object Save can never clobber it.
 ipcMain.handle('settings:get', () => store.redactForRenderer(store.getSettings()));
-ipcMain.handle('settings:set', (_e, patch) => { sttDisabled = false; return store.redactForRenderer(store.setSettings(store.stripRendererPatch(patch))); });
+ipcMain.handle('settings:set', (_e, patch) => {
+  sttDisabled = false;
+  const result = store.redactForRenderer(store.setSettings(store.stripRendererPatch(patch)));
+  if (patch && patch.apiKeys && patch.apiKeys.gemini) {
+    setApiKey(patch.apiKeys.gemini);
+  }
+  return result;
+});
 
 // -------- publik API --------
 // Contract: ~/publik-api-research/CONTRACT.md. The key is minted only after

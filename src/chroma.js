@@ -77,22 +77,20 @@ function isReady() {
  * @returns {Promise<number[][]>}
  */
 async function embedTexts(texts) {
+  if (!texts || texts.length === 0) return [];
   const { GoogleGenAI } = require('@google/genai');
   const ai = new GoogleGenAI({ apiKey: geminiKey });
 
-  // Gemini supports batching via multiple contents in one request.
-  // We embed each text individually to keep it simple and avoid batching limits.
-  const vectors = await Promise.all(
-    texts.map(async (text) => {
-      const result = await ai.models.embedContent({
-        model:   'text-embedding-004',
-        content: text,
-      });
-      // result.embedding.values is the float[] vector
-      return result.embedding.values;
-    })
-  );
-  return vectors;
+  const result = await ai.models.embedContent({
+    model:    'gemini-embedding-001',
+    contents: texts,
+  });
+
+  if (!result || !result.embeddings) {
+    throw new Error('Gemini embedContent returned no embeddings');
+  }
+
+  return result.embeddings.map(e => e.values);
 }
 
 // ── Text building ─────────────────────────────────────────────────────────────
