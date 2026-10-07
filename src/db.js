@@ -62,4 +62,4 @@ async function recentSessions(n = 10) {
     .toArray();
 }
 
-module.exports = { saveSession, recentSessions };
+module.exports = { connect, saveSession, recentSessions };

@@ -13,7 +13,9 @@ const { AdaptiveVAD, AudioRingBuffer } = require('./src/vad');
 const { buildInterviewContext, detectCategory } = require('./src/interview-context');
 const { startAppLink, stopAppLink, recordEvent, appLinkConsentState, revokeAppLinkCaller } = require('./src/applink');
 const publik = require('./src/publik');
-const { saveSession } = require('./src/db');
+const { saveSession, connect: dbConnect } = require('./src/db');
+const { initChroma, storeInterview } = require('./src/chroma');
+const { buildRagContext } = require('./src/rag');
 // The app token release.yml baked into src/publik-build.json (empty in a dev
 // checkout → the publik option is simply absent from the provider picker).
 const publikBuild = publik.loadBuildConfig();
@@ -568,7 +570,19 @@ async function runFeature(mode, userText) {
     }
 
     const settingsForPrompt = store.getSettings();
-    const contextBlock = buildInterviewContext(settingsForPrompt, mode, transcript);
+    let contextBlock = buildInterviewContext(settingsForPrompt, mode, transcript);
+
+    // RAG: enrich context with semantically relevant past interviews.
+    // Only runs when ChromaDB is connected — degrades gracefully if not.
+    try {
+      const ragContext = await buildRagContext(userText || '', await dbConnect().catch(() => null));
+      if (ragContext) {
+        contextBlock = (contextBlock ? contextBlock + '\n\n' : '') + ragContext;
+      }
+    } catch (ragErr) {
+      console.warn('[rag] enrichment skipped:', ragErr.message);
+    }
+
     const system = def.buildSystem ? def.buildSystem(contextBlock, settingsForPrompt.aiRules || '') : (def.system || '');
     const built = def.build({ transcript, userText: userText || '' });
 
@@ -943,6 +957,15 @@ ipcMain.handle('session:save', async () => {
 
     const id = await saveSession(doc);
     console.log('[session] saved to MongoDB, id:', id);
+
+    // Store embedding in ChromaDB for future RAG lookups.
+    // Wrapped in its own try/catch — ChromaDB failure must not break the save.
+    try {
+      await storeInterview(doc, id);
+    } catch (chromaErr) {
+      console.error('[chroma] failed to store embedding (session save still succeeded):', chromaErr.message);
+    }
+
     return { ok: true, id };
   } catch (e) {
     console.error('[session] save error:', e && e.message);
@@ -1128,6 +1151,10 @@ app.whenReady().then(async () => {
 
   launchApp();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+
+  // Initialize ChromaDB for RAG. Non-blocking — if Docker is not running the
+  // app still works normally; RAG context is simply skipped per-query.
+  initChroma().catch(err => console.warn('[chroma] startup init failed (RAG disabled):', err.message));
 });
 
 app.on('will-quit', () => {
