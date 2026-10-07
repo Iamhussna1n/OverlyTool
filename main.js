@@ -1152,9 +1152,11 @@ app.whenReady().then(async () => {
   launchApp();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 
-  // Initialize ChromaDB for RAG. Non-blocking — if Docker is not running the
-  // app still works normally; RAG context is simply skipped per-query.
-  initChroma().catch(err => console.warn('[chroma] startup init failed (RAG disabled):', err.message));
+  // Initialize ChromaDB for RAG. Non-blocking — if Docker is not running or
+  // the Gemini key is absent, the app still works; RAG context is skipped.
+  const _chromaSettings = store.getSettings();
+  initChroma(_chromaSettings.apiKeys && _chromaSettings.apiKeys.gemini || '')
+    .catch(err => console.warn('[chroma] startup init failed (RAG disabled):', err.message));
 });
 
 app.on('will-quit', () => {

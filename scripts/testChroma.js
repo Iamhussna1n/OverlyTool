@@ -1,13 +1,13 @@
 // scripts/testChroma.js
 // Verifies the full ChromaDB integration end-to-end:
 //   1. Connect
-//   2. Store a fake interview embedding
+//   2. Store a fake interview embedding (via Gemini embedding API)
 //   3. Search with a relevant query (should get a low distance score)
-//   4. Search with an unrelated query (should get a high distance score)
+//   4. Search with an unrelated query (should get a higher distance score)
 //   5. Clean up the test document
 //
 // Usage:
-//   node scripts/testChroma.js
+//   GEMINI_API_KEY=your_key_here node scripts/testChroma.js
 //
 // Prerequisites:
 //   ChromaDB must be running: docker run -p 8000:8000 chromadb/chroma
@@ -21,8 +21,15 @@ const FAKE_ID = 'test-rag-001';
 async function test() {
   console.log('=== ChromaDB Integration Test ===\n');
 
+  const geminiKey = process.env.GEMINI_API_KEY || '';
+  if (!geminiKey) {
+    console.error('[ERROR] GEMINI_API_KEY environment variable is not set.');
+    console.error('  Usage: GEMINI_API_KEY=your_key node scripts/testChroma.js');
+    process.exit(1);
+  }
+
   // 1. Connect
-  const chromaReady = await initChroma();
+  const chromaReady = await initChroma(geminiKey);
   if (!chromaReady) {
     console.error('[FAIL] Could not connect to ChromaDB.');
     console.error('  Start it with: docker run -p 8000:8000 chromadb/chroma');
@@ -52,14 +59,14 @@ async function test() {
   const count = await getCount();
   console.log(`[INFO] Total documents in ChromaDB: ${count}\n`);
 
-  // 4a. Relevant search — should return a LOW distance (< 1.0 ideally)
+  // 4a. Relevant search — should return a LOW distance
   console.log('--- Search: "How did you handle message loss in Kafka?" ---');
   const results1 = await searchInterviews('How did you handle message loss in Kafka?');
   if (results1.length === 0) {
-    console.warn('[WARN] No results returned. Collection may be empty or too small for nResults=3.');
+    console.warn('[WARN] No results returned. Check Gemini API key and ChromaDB connection.');
   }
   results1.forEach(r => {
-    const relevance = r.distance < 0.7 ? 'VERY RELEVANT' : r.distance < 1.0 ? 'SOMEWHAT RELEVANT' : 'WEAK';
+    const relevance = r.distance < 0.3 ? 'VERY RELEVANT' : r.distance < 0.6 ? 'SOMEWHAT RELEVANT' : 'WEAK';
     console.log(`  Match: ${r.mongoId} | Distance: ${r.distance.toFixed(4)} | ${relevance}`);
   });
 
@@ -67,17 +74,17 @@ async function test() {
   console.log('\n--- Search: "Tell me about your React frontend experience" ---');
   const results2 = await searchInterviews('Tell me about your React frontend experience');
   results2.forEach(r => {
-    const relevance = r.distance < 0.7 ? 'VERY RELEVANT' : r.distance < 1.0 ? 'SOMEWHAT RELEVANT' : 'WEAK';
+    const relevance = r.distance < 0.3 ? 'VERY RELEVANT' : r.distance < 0.6 ? 'SOMEWHAT RELEVANT' : 'WEAK';
     console.log(`  Match: ${r.mongoId} | Distance: ${r.distance.toFixed(4)} | ${relevance}`);
   });
 
-  // 4c. Compare distances
+  // 4c. Sanity check
   const kafkaDist = results1[0]?.distance ?? Infinity;
   const reactDist = results2[0]?.distance ?? Infinity;
   if (kafkaDist < reactDist) {
-    console.log('\n[PASS] Kafka query scored closer (more relevant) than React query — semantic search is working correctly.');
+    console.log('\n[PASS] Kafka query scored closer (more relevant) than React query — semantic search working correctly.');
   } else {
-    console.warn('\n[WARN] Semantic scoring looks off. The Kafka query distance should be lower than the React query distance.');
+    console.warn('\n[WARN] Kafka distance should be lower than React distance. Check embedding quality.');
   }
 
   // 5. Cleanup

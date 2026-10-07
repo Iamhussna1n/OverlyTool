@@ -9,11 +9,11 @@
 
 const { searchInterviews, isReady } = require('./chroma');
 
-// Distance threshold for the all-MiniLM-L6-v2 model:
-//   < 0.7  = very relevant
-//   0.7–1.0 = somewhat relevant (still included)
-//   > 1.0  = probably irrelevant — excluded
-const RELEVANCE_THRESHOLD = 1.0;
+// Distance threshold for cosine space (Gemini text-embedding-004):
+//   0.0–0.3 = very relevant
+//   0.3–0.6 = somewhat relevant (still included)
+//   > 0.6   = probably irrelevant — excluded
+const RELEVANCE_THRESHOLD = 0.6;
 
 /**
  * Retrieve semantically relevant past interview snippets for a live query.
