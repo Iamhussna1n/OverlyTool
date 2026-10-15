@@ -149,7 +149,7 @@ html, body {
 .mic-perm-actions button.dismiss:hover { background: rgba(255,255,255,0.10); color: var(--tx-2); }
 
 /* ============================ Panel ============================ */
-#panel-wrap { position: relative; margin-top: 12px; width: min(624px, 94vw); flex: 1; min-height: 0; overflow: hidden; /* FIX: contain panel growth within remaining space */ }
+#panel-wrap { position: relative; margin-top: 12px; width: min(624px, 94vw); flex: 0 1 auto; min-height: 0; overflow: hidden; max-height: calc(100vh - 80px); /* shrink-wrap to content so empty space below is click-through */ }
 button:focus { outline: none; }
 #live-dot {
   position: absolute; top: -3px; left: -5px; z-index: 4;
